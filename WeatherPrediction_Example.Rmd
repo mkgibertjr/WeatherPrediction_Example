@@ -1,0 +1,258 @@
+---
+title: "Predicting the Weather using Machine Learning"
+author: "Myron Keith Gibert Jr"
+date: '2022-11-02'
+output: pdf_document
+urlcolor: cyan
+linkcolor: cyan
+header-includes:
+- \usepackage{hyperref}
+- \hypersetup{
+    colorlinks=true,
+    filecolor=magenta,      
+    pdfpagemode=FullScreen,
+    }
+toc: TRUE
+---
+
+\thispagestyle{empty}
+\clearpage
+\pagenumbering{arabic} 
+\pagebreak
+
+```{r tinytex, include=FALSE}
+## INSTALLING LATEX FOR RMARKDOWN
+#RMarkdown requires LaTex to create pdf documents as an output. More information can be found [here](https://bookdown.org/yihui/rmarkdown/pdf-document.html). Alternatively, output can be set to "html_document" or "word_document". End users may install LaTex by setting the "wanttinytex" variable to FALSE and running the following script:
+#Install tinytex to let RMarkdown create a pdf document? Default: wanttinytex <- FALSE
+wanttinytex <- TRUE
+if(wanttinytex == TRUE){
+if(tinytex:::is_tinytex()==FALSE && wanttinytex == TRUE){
+  if (!require("tinytex")) install.packages("tinytex")
+  tinytex::install_tinytex()
+  tinytex:::install_prebuilt()}
+library("tinytex")
+#tlmgr_install("fvextra")
+}
+```
+
+# Introduction
+
+## Assignment Scenario
+
+Congratulations! You have just been hired by a US Weather forecast firm as a data scientist.
+
+The company is considering the weather condition to help predict the possibility of precipitations, which involves using various local climatological variables, including temperature, wind speed, humidity, dew point, and pressure. The data you will be handling was collected by a NOAA weather station located at the John F. Kennedy International Airport in Queens, New York.
+
+Your task is to provide a high level analysis of weather data in JFK Airport. Your stakeholders want to understand the current and historical record of precipitations based on different variables. For now they are mainly interested in a macro-view of JFK Airport Weather, and how it relates to the possibility to rain because it will affect flight delays and etc.
+
+## The Data
+
+This project relates to the NOAA Weather Dataset - JFK Airport (New York). The original dataset contains 114,546 hourly observations of 12 local climatological variables (such as temperature and wind speed) collected at JFK airport. This dataset can be obtained for free from the IBM Developer Data Asset Exchange.
+
+For this project, you will be using a subset dataset, which contains 5727 rows (about 5% or original rows) and 9 columns. The end goal will be to predict the precipitation using some of the available features. In this project, you will practice reading data files, preprocessing data, creating models, improving models and evaluating them to ultimately choose the best model.
+
+## Import required modules
+
+Below, install "tidymodels", additionally "rlang" should be updated in order to properly run "tidymodels".
+
+```{r setup, message=FALSE,warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+if (!require("tidyverse")) install.packages("tidyverse")
+library("tidyverse")
+
+if (!require("ggplot2")) install.packages("ggplot2")
+library("ggplot2")
+
+if (!require("ggthemes")) install.packages("ggthemes")
+library("ggthemes")
+
+if (!require("rlang")) install.packages("rlang")
+library("rlang")
+
+if (!require("tidymodels")) install.packages("tidymodels")
+library("tidymodels")
+
+```
+
+## Understand the Dataset
+
+Understand the Dataset
+The original NOAA JFK dataset contains 114,546 hourly observations of various local climatological variables (including temperature, wind speed, humidity, dew point, and pressure).
+
+In this project you will use a sample dataset, which is around 293 KB: 
+
+[Link to the sample dataset](https://dax-cdn.cdn.appdomain.cloud/dax-noaa-weather-data-jfk-airport/1.1.4/noaa-weather-sample-data.tar.gz)
+
+The sample contains 5727 rows (about 5% or original rows) and 9 columns, which are:
+
+* DATE
+* HOURLYDewPointTempF
+* HOURLYRelativeHumidity
+* HOURLYDRYBULBTEMPF
+* HOURLYWETBULBTEMPF
+* HOURLYPrecip
+* HOURLYWindSpeed
+* HOURLYSeaLevelPressure
+* HOURLYStationPressure
+
+The original dataset is much bigger. Feel free to explore the original dataset: 
+
+[Link to the original dataset](https://dax-cdn.cdn.appdomain.cloud/dax-noaa-weather-data-jfk-airport/1.1.4/noaa_weather.html)
+
+For more information about the dataset, checkout the preview of NOAA Weather - JFK Airport:
+
+[Link to the preview](https://dax-cdn.cdn.appdomain.cloud/dax-noaa-weather-data-jfk-airport/1.1.4/data-preview/index.html?_ga=2.176781478.281508226.1616293518-1509963377.1616117067&cm_mc_uid=90945889198916153255549&cm_mc_sid_50200000=64650651616293516933)
+
+# 1. Download NOAA Weather Dataset
+
+Use the download.file() function to download the sample dataset from the URL below.  Then untar it.
+
+URL = [https://dax-cdn.cdn.appdomain.cloud/dax-noaa-weather-data-jfk-airport/1.1.4/noaa-weather-sample-data.tar.gz](https://dax-cdn.cdn.appdomain.cloud/dax-noaa-weather-data-jfk-airport/1.1.4/noaa-weather-sample-data.tar.gz)
+
+```{r download data,message=FALSE,warning=FALSE,results=FALSE}
+
+download.file("https://dax-cdn.cdn.appdomain.cloud/dax-noaa-weather-data-jfk-airport/1.1.4/noaa-weather-sample-data.tar.gz","noaa-weather-sample-data.tar.gz")
+
+untar("noaa-weather-sample-data.tar.gz")
+
+```
+
+# 2. Extract and Read into Project
+
+We start by reading in the raw dataset. You should specify the file name as "noaa-weather-sample-data/jfk_weather_sample.csv".
+
+Then, display the first few rows, and use glimpse to confirm its integrity (5727 rows x 9 columns)
+
+```{r readcsv, eval=FALSE}
+
+data <- read.csv("noaa-weather-sample-data/jfk_weather_sample.csv")
+
+head(data)
+
+glimpse(data)
+
+```
+
+```{r readcsv_run1,echo=FALSE,message=FALSE,warning=FALSE,results=FALSE}
+
+data <- read.csv("noaa-weather-sample-data/jfk_weather_sample.csv")
+
+head(data)
+
+```
+
+```{r readcsv_run2,echo=FALSE}
+
+glimpse(data)
+
+```
+
+# 3. Select Subset of Columns
+
+The end goal of this project will be to predict HOURLYprecip (precipitation) using a few other variables. Before you can do this, you first need to preprocess the dataset. Section 3 to section 6 focuses on preprocessing.
+
+The first step in preprocessing is to select a subset of data columns and inspect the column types.
+
+The key columns that we will explore in this project are:
+
+* HOURLYRelativeHumidity
+* HOURLYDRYBULBTEMPF
+* HOURLYPrecip
+* HOURLYWindSpeed
+* HOURLYStationPressure
+
+Data Glossary:
+
+* 'HOURLYRelativeHumidity' is the relative humidity given to the nearest whole percentage.
+* 'HOURLYDRYBULBTEMPF' is the dry-bulb temperature and is commonly used as the standard air temperature reported. It is given here in whole degrees Fahrenheit.
+* 'HOURLYPrecip' is the amount of precipitation in inches to hundredths over the past hour. For certain automated stations, precipitation will be reported at sub-hourly intervals (e.g. every 15 or 20 minutes) as an accumulated amount of all precipitation within the preceding hour. A “T” indicates a trace amount of precipitation.
+* 'HOURLYWindSpeed' is the speed of the wind at the time of observation given in miles per hour (mph).
+* 'HOURLYStationPressure' is the atmospheric pressure observed at the station during the time of observation. Given in inches of Mercury (in Hg).
+
+Select those five columns and store the modified dataframe as a new variable. Then, show the first ten rows.
+
+```{r selectdata, eval=FALSE}
+
+data_subset <- data %>%
+  dplyr::select(HOURLYRelativeHumidity,
+                HOURLYDRYBULBTEMPF,
+                HOURLYPrecip,
+                HOURLYWindSpeed,
+                HOURLYStationPressure)
+
+head(data_subset,10)
+
+```
+
+```{r selectdata_run1,echo=FALSE}
+
+data_subset <- data %>%
+  dplyr::select(HOURLYRelativeHumidity,HOURLYDRYBULBTEMPF,HOURLYPrecip,HOURLYWindSpeed,HOURLYStationPressure)
+
+```
+
+# 4. Clean Up Columns
+
+From the dataframe preview above, we can see that the column HOURLYPrecip - which is the hourly measure of precipitation levels - contains both NA and T values. T specifies trace amounts of precipitation (meaning essentially no precipitation), while NA means not available, and is used to denote missing values. Additionally, some values also have "s" at the end of them, indicating that the precipitation was snow.
+
+Inspect the unique values present in the column HOURLYPrecip (with unique(dataframe$column)) to see these values.
+
+```{r unique}
+
+unique(data_subset$HOURLYPrecip)
+
+```
+Having characters in values (like the "T" and "s" that you see in the unique values) will cause problems when you create a model because values for precipitation should be numerical. So you need to fix these values that have characters.
+
+Now, for the column HOURLYPrecip:
+
+1. Replace all the T values with "0.0" and 
+2. Remove "s" from values like "0.02s". In R, you can use the method str_remove(column, pattern = "s$") to remove the character "s" from the end of values. The "$" tells R to match to the end of values. The pattern is a regex pattern. 
+
+Look [here](https://www.rdocumentation.org/packages/stringi/versions/1.5.3/topics/about_search_regex?utm_medium=Exinfluencer&utm_source=Exinfluencer&utm_content=000026UJ&utm_term=10006555&utm_id=NA-SkillsNetwork-Channel-SkillsNetworkCoursesIBMDA0151ENSkillsNetwork21582452-2022-01-01) for more information about regex and matching to strings in R.
+
+Remember that you can use tidyverse's mutate() to update columns.
+
+You can check your work by checking if unique values of HOURLYPrecip still contain any T or s. Store the modified dataframe as a new variable.
+
+```{r colclean}
+
+data_subset_clean <- data_subset %>%
+  mutate(HOURLYPrecip = str_remove(HOURLYPrecip,pattern = "s$"),HOURLYPrecip = str_replace(HOURLYPrecip,"T","0.00"))
+
+unique(data_subset_clean$HOURLYPrecip)
+
+
+```
+
+# 5. Convert Columns to Numerical Types
+
+Now that you have removed the characters in the HOURLYPrecip column, you can safely covert the column to a numeric type.
+
+First, check the types of the columns. You will notice that all are dbl (double or numeric) except for HOURLYPrecip, which is chr (character or string). Use the glimpse function from Tidyverse. Then, convert HOURLYPrecip to the numeric type and store the cleaned dataframe as a new variable. Lastly, confirm that all columns have the numeric type.
+
+```{r colnumeric, eval=FALSE}
+
+glimpse(data_subset_clean)
+
+#or
+
+sapply(data_subset_clean,class)
+
+data_subset_clean$HOURLYPrecip <- as.numeric(data_subset_clean$HOURLYPrecip)
+
+sapply(data_subset_clean,class)
+
+```
+
+```{r colnumeric_run1,echo=FALSE}
+
+sapply(data_subset_clean,class)
+
+data_subset_clean$HOURLYPrecip <- as.numeric(data_subset_clean$HOURLYPrecip)
+
+sapply(data_subset_clean,class)
+
+```
+
