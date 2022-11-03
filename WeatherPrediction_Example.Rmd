@@ -1,5 +1,5 @@
 ---
-title: "Predicting the Weather using Machine Learning"
+title: "Predicting the Weather using Machine Learning with R"
 author: "Myron Keith Gibert Jr"
 date: '2022-11-02'
 output: pdf_document
@@ -73,6 +73,9 @@ library("rlang")
 if (!require("tidymodels")) install.packages("tidymodels")
 library("tidymodels")
 
+if (!require("glmnet")) install.packages("glmnet")
+library("glmnet")
+
 ```
 
 ## Understand the Dataset
@@ -110,7 +113,18 @@ Use the download.file() function to download the sample dataset from the URL bel
 
 URL = [https://dax-cdn.cdn.appdomain.cloud/dax-noaa-weather-data-jfk-airport/1.1.4/noaa-weather-sample-data.tar.gz](https://dax-cdn.cdn.appdomain.cloud/dax-noaa-weather-data-jfk-airport/1.1.4/noaa-weather-sample-data.tar.gz)
 
-```{r download data,message=FALSE,warning=FALSE,results=FALSE}
+```{r download data,eval=FALSE}
+
+download.file(url = "https://dax-cdn.cdn.appdomain.cloud/
+              dax-noaa-weather-data-jfk-airport/
+              1.1.4/noaa-weather-sample-data.tar.gz"
+              ,destfile = "noaa-weather-sample-data.tar.gz")
+
+untar("noaa-weather-sample-data.tar.gz")
+
+```
+
+```{r download data_run1,echo=FALSE,message=FALSE,warning=FALSE,results=FALSE}
 
 download.file("https://dax-cdn.cdn.appdomain.cloud/dax-noaa-weather-data-jfk-airport/1.1.4/noaa-weather-sample-data.tar.gz","noaa-weather-sample-data.tar.gz")
 
@@ -219,7 +233,8 @@ You can check your work by checking if unique values of HOURLYPrecip still conta
 ```{r colclean}
 
 data_subset_clean <- data_subset %>%
-  mutate(HOURLYPrecip = str_remove(HOURLYPrecip,pattern = "s$"),HOURLYPrecip = str_replace(HOURLYPrecip,"T","0.00"))
+  mutate(HOURLYPrecip = str_remove(HOURLYPrecip,pattern = "s$"),
+         HOURLYPrecip = str_replace(HOURLYPrecip,"T","0.00"))
 
 unique(data_subset_clean$HOURLYPrecip)
 
@@ -248,11 +263,392 @@ sapply(data_subset_clean,class)
 
 ```{r colnumeric_run1,echo=FALSE}
 
-sapply(data_subset_clean,class)
-
 data_subset_clean$HOURLYPrecip <- as.numeric(data_subset_clean$HOURLYPrecip)
 
 sapply(data_subset_clean,class)
 
 ```
+
+# 6. Rename Columns
+
+Let's rename the following columns as:
+
+* 'HOURLYRelativeHumidity' to 'relative_humidity'
+* 'HOURLYDRYBULBTEMPF' to 'dry_bulb_temp_f'
+* 'HOURLYPrecip' to 'precip'
+* 'HOURLYWindSpeed' to 'wind_speed'
+'* HOURLYStationPressure' to 'station_pressure'
+
+You can use dplyr::rename(). Then, store the final dataframe as a new variable.
+
+```{r colrename}
+
+data_subset_rename <- data_subset_clean %>%
+  dplyr::rename(relative_humidity = HOURLYRelativeHumidity,
+                dry_bulb_temp_f = HOURLYDRYBULBTEMPF,
+                precip = HOURLYPrecip,
+                wind_speed = HOURLYWindSpeed,
+                station_pressure = HOURLYStationPressure)
+
+```
+
+# 7. Exploratory Data Analysis 
+
+Now that you have finished preprocessing the dataset, you can can start exploring the columns more.
+
+## Splitting Data into Training and Testing Sets
+
+First, split the data into a training and testing set. Splitting a dataset is done randomly, so to have reproducible results set the seed = 1234. Also, use 80% of the data for training.
+
+```{r datasplit}
+
+set.seed(1234)
+
+data_subset_split <- initial_split(data_subset_rename,prop=0.80)
+
+```
+
+## Taking a snapshot of the Training Dataset
+
+Next, looking at just the training set, plot histograms or box plots of the variables (relative_humidity, dry_bulb_temp_f, precip, wind_speed, station_pressure) for an intial look of their distributions using tidyverse's ggplot. Leave the testing set as is because it is good practice to not see the testing set until evaluating the final model.
+
+```{r training_ggplot,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+data_subset_training <- training(data_subset_split) 
+
+data_subset_training_plot <- data_subset_training %>%
+  gather(key = "training_variable",value = "training_value",-precip)
+
+p <- ggplot(data_subset_training_plot,aes(training_value,fill=training_variable)) + 
+  geom_histogram() + 
+  facet_wrap(~training_variable,scales="free",ncol=5) +
+  xlab("Training Variable") + 
+  ylab(expression("Training Value")) + 
+  ggtitle(expression("Snapshot of Training Dataset")) +
+  theme_light() +
+  scale_color_colorblind() +
+  scale_fill_colorblind() +
+  theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_text(size=rel(1.2), face="bold",hjust = 0.5),
+        legend.position = "none") 
+
+p
+
+```
+
+# 8. Designing a Simple Linear Regression model
+
+After exploring the dataset more, you are now ready to start creating models to predict the precipitation (precip).
+
+Create simple linear regression models where precip is the response variable and each of relative_humidity, dry_bulb_temp_f,wind_speed or station_pressure will be a predictor variable, e.g. precip ~ relative_humidity, precip ~ dry_bulb_temp_f, etc. for a total of four simple models. Additionally, visualize each simple model with a scatter plot.
+
+## Design Model
+
+```{r simple_lm}
+
+lm_model <- linear_reg() %>% 
+            set_engine('lm') %>% # adds lm implementation of linear regression
+            set_mode('regression')
+
+```
+
+## Precipitation vs Dry Bulb Temperature (Fahrenheit)
+
+```{r precip_dry_bulb_temp_f,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+lm_fit <- lm_model %>% 
+          fit(precip ~ dry_bulb_temp_f, data = data_subset_training)
+
+fitdata <- tidy(lm_fit)
+
+operator <- ifelse(as.numeric(fitdata$estimate[
+  complete.cases(match(fitdata$term,"dry_bulb_temp_f"))])>=0,
+  "+",
+  "-")
+
+reg_equation <- paste(
+  "y = ",
+  (fitdata$estimate[complete.cases(match(fitdata$term,"(Intercept)"))]),
+  operator,
+  abs(fitdata$estimate[complete.cases(match(fitdata$term,"dry_bulb_temp_f"))]),
+  "x",
+  sep="")
+
+p <- ggplot(data_subset_training,(aes(dry_bulb_temp_f,precip))) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) + 
+  xlab("Dry Bulb Temperature (Fahrenheit)") + 
+  ylab(expression("Precipitation")) + 
+  theme_light() +
+  scale_color_colorblind() +
+  scale_fill_colorblind() +
+  theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_blank(),
+        legend.position = "none") + 
+annotate('text', label=reg_equation, x=-Inf, y=Inf, hjust=0, vjust=1,color="red")
+
+
+p
+
+```
+
+## Precipitation vs Relative Humidity
+
+```{r precip_relative_humidity,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+lm_fit <- lm_model %>% 
+          fit(precip ~ relative_humidity, data = data_subset_training)
+
+fitdata <- tidy(lm_fit)
+
+operator <- ifelse(as.numeric(fitdata$estimate[
+  complete.cases(match(fitdata$term,"relative_humidity"))])>=0,
+  "+",
+  "-")
+
+reg_equation <- paste(
+  "y = ",
+  (fitdata$estimate[complete.cases(match(fitdata$term,"(Intercept)"))]),
+  operator,
+  abs(fitdata$estimate[complete.cases(match(fitdata$term,"relative_humidity"))]),
+  "x",
+  sep="")
+
+p <- ggplot(data_subset_training,(aes(relative_humidity,precip))) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) + 
+  xlab("Relative Humidity") + 
+  ylab(expression("Precipitation")) + 
+  theme_light() +
+  scale_color_colorblind() +
+  scale_fill_colorblind() +
+  theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_blank(),
+        legend.position = "none") + 
+annotate('text', label=reg_equation, x=-Inf, y=Inf, hjust=0, vjust=1,color="red")
+
+
+p
+
+```
+
+## Precipitation vs Station Pressure
+
+```{r precip_station_pressure,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+lm_fit <- lm_model %>% 
+          fit(precip ~ station_pressure, data = data_subset_training)
+
+fitdata <- tidy(lm_fit)
+
+operator <- ifelse(as.numeric(fitdata$estimate[
+  complete.cases(match(fitdata$term,"station_pressure"))])>=0,
+  "+",
+  "-")
+
+reg_equation <- paste(
+  "y = ",
+  (fitdata$estimate[complete.cases(match(fitdata$term,"(Intercept)"))]),
+  operator,
+  abs(fitdata$estimate[complete.cases(match(fitdata$term,"station_pressure"))]),
+  "x",
+  sep="")
+
+p <- ggplot(data_subset_training,(aes(station_pressure,precip))) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) + 
+  xlab("Station Pressure") + 
+  ylab(expression("Precipitation")) + 
+  theme_light() +
+  scale_color_colorblind() +
+  scale_fill_colorblind() +
+  theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_blank(),
+        legend.position = "none") + 
+annotate('text', label=reg_equation, x=-Inf, y=Inf, hjust=0, vjust=1,color="red")
+
+
+p
+
+```
+
+## Precipitation vs Wind Speed
+
+```{r precip_wind_speed,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+lm_fit <- lm_model %>% 
+          fit(precip ~ wind_speed, data = data_subset_training)
+
+fitdata <- tidy(lm_fit)
+
+operator <- ifelse(as.numeric(fitdata$estimate[
+  complete.cases(match(fitdata$term,"wind_speed"))])>=0,
+  "+",
+  "-")
+
+reg_equation <- paste(
+  "y = ",
+  (fitdata$estimate[complete.cases(match(fitdata$term,"(Intercept)"))]),
+  operator,
+  abs(fitdata$estimate[complete.cases(match(fitdata$term,"wind_speed"))]),
+  "x",
+  sep="")
+
+p <- ggplot(data_subset_training,(aes(wind_speed,precip))) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) + 
+  xlab("Wind Speed") + 
+  ylab(expression("Precipitation")) + 
+  theme_light() +
+  scale_color_colorblind() +
+  scale_fill_colorblind() +
+  theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_blank(),
+        legend.position = "none") + 
+annotate('text', label=reg_equation, x=-Inf, y=Inf, hjust=0, vjust=1,color="red")
+
+
+p
+
+```
+
+# 9. Improve the Model
+
+Now, try improving the simple models you created in the previous section.
+
+Create at least two more models, each model should use at least one of the different techniques:
+
+* Add more features/predictors
+* Add regularization (L1, L2 or a mix)
+* Add a polynomial component
+
+Also, for each of the models you create, check the model performance using the training set and a metric like MSE, RMSE, or R-squared.
+
+Consider using tidymodels if you choose to add regularization and tune lambda.
+
+## Normalize the data
+
+Since the data are not normally distributed (See Section 7), we will need to normalize the data for a multiple regression model. We can use this recipe
+
+### Simple Scaling
+
+```{r normalizedata_simplescaled,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+simple_scaled_data <- data_subset_training_plot %>%
+  group_by(training_variable) %>%
+  mutate(max_value = max(training_value,na.rm=TRUE),
+         simple_scaled_value = training_value/max_value)
+
+p <- ggplot(simple_scaled_data,aes(simple_scaled_value,fill=training_variable)) + 
+  geom_histogram() + 
+  facet_wrap(~training_variable,scales="free",ncol=5) +
+  xlab("Training Variable") + 
+  ylab(expression("Training Value normalized by Simple Scaling")) + 
+  ggtitle(expression("Snapshot of Training Dataset normalized by Simple Scaling")) +
+  theme_light() +
+  scale_color_colorblind() +
+  scale_fill_colorblind() +
+  theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_text(size=rel(1.2), face="bold",hjust = 0.5),
+        legend.position = "none") 
+
+p
+
+```
+
+These data are not normally distributed.  The histograms should be centered on 0.50, but all histograms are skewed to some degree.  Let's try a different method.
+
+### Min-Max
+
+```{r normalizedata_minmax,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+minmax_data <- data_subset_training_plot %>%
+  group_by(training_variable) %>%
+  mutate(max_value = max(training_value,na.rm=TRUE),
+         min_value = min(training_value,na.rm=TRUE),
+         minmax_value = (training_value-max_value)/(max_value-min_value))
+
+p <- ggplot(minmax_data,aes(minmax_value,fill=training_variable)) + 
+  geom_histogram() + 
+  facet_wrap(~training_variable,scales="free",ncol=5) +
+  xlab("Training Variable") + 
+  ylab(expression("Training Value normalized by Min-Max")) + 
+  ggtitle(expression("Snapshot of Training Dataset normalized by Min-Max")) +
+  theme_light() +
+  scale_color_colorblind() +
+  scale_fill_colorblind() +
+  theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_text(size=rel(1.2), face="bold",hjust = 0.5),
+        legend.position = "none") 
+
+p
+
+```
+
+This looks a little better, but still has some skewness to it.  Let's try one more method.
+
+### Z-Score
+
+```{r normalizedata_zscore,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+zscore_data <- data_subset_training_plot %>%
+  group_by(training_variable) %>%
+  mutate(mean_value = mean(training_value,na.rm=TRUE),
+         sd_value = sd(training_value,na.rm=TRUE),
+         zscore_value = (training_value-mean_value)/(sd_value))
+
+p <- ggplot(zscore_data,aes(zscore_value,fill=training_variable)) + 
+  geom_histogram() + 
+  facet_wrap(~training_variable,scales="free",ncol=5) +
+  xlab("Training Variable") + 
+  ylab(expression("Training Value normalized by zscore")) + 
+  ggtitle(expression("Snapshot of Training Dataset normalized by zscore")) +
+  theme_light() +
+  scale_color_colorblind() +
+  scale_fill_colorblind() +
+  theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_text(size=rel(1.2), face="bold",hjust = 0.5),
+        legend.position = "none") 
+
+p
+
+```
+
+This is the best normalization method, as all histograms are centered on 0, even if they are not perfectly normal. 
+
+Although I like this one, I'll incorporate all three into different models to see which method works the best.
+
+## Model Regulatization
+
+### Fit a new model
+
+```{r newmodelfit}
+
+## Design Model
+
+glm_model_L1 <- logistic_reg(
+  mode = "classification",
+  engine = "glm",
+  penalty = NULL,
+  mixture = 1
+)
+
+glm_model_L2 <- logistic_reg(
+  mode = "classification",
+  engine = "glm",
+  penalty = NULL,
+  mixture = 0
+)
+
+glm_model_50 <- logistic_reg(
+  mode = "classification",
+  engine = "glm",
+  penalty = NULL,
+  mixture = 0.5
+)
+
+
+```
+
+## Trying a different model method (Random Forest)
 
