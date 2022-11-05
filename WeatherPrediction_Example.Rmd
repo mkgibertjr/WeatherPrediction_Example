@@ -67,6 +67,9 @@ library("ggplot2")
 if (!require("ggthemes")) install.packages("ggthemes")
 library("ggthemes")
 
+if (!require("ggpmisc")) install.packages("ggpmisc")
+library("ggpmisc")
+
 if (!require("rlang")) install.packages("rlang")
 library("rlang")
 
@@ -534,12 +537,12 @@ Since the data are not normally distributed (See Section 7), we will need to nor
 
 ```{r normalizedata_simplescaled,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
 
-simple_scaled_data <- data_subset_training_plot %>%
-  group_by(training_variable) %>%
-  mutate(max_value = max(training_value,na.rm=TRUE),
-         simple_scaled_value = training_value/max_value)
+simple_scaled_data <- as.data.frame(apply(data_subset_training, 2, function(x) (x/max(x,na.rm=TRUE))))
 
-p <- ggplot(simple_scaled_data,aes(simple_scaled_value,fill=training_variable)) + 
+simple_scaled_data_plot <- simple_scaled_data %>%
+  gather(key = "training_variable",value = "simple_scaled_value",-precip)
+
+p <- ggplot(simple_scaled_data_plot,aes(simple_scaled_value,fill=training_variable)) + 
   geom_histogram() + 
   facet_wrap(~training_variable,scales="free",ncol=5) +
   xlab("Training Variable") + 
@@ -562,13 +565,12 @@ These data are not normally distributed.  The histograms should be centered on 0
 
 ```{r normalizedata_minmax,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
 
-minmax_data <- data_subset_training_plot %>%
-  group_by(training_variable) %>%
-  mutate(max_value = max(training_value,na.rm=TRUE),
-         min_value = min(training_value,na.rm=TRUE),
-         minmax_value = (training_value-max_value)/(max_value-min_value))
+minmax_data <- as.data.frame(apply(data_subset_training, 2, function(x) (x-max(x,na.rm=TRUE))/(max(x,na.rm=TRUE)-min(x,na.rm=TRUE))))
 
-p <- ggplot(minmax_data,aes(minmax_value,fill=training_variable)) + 
+minmax_data_plot <- minmax_data %>%
+  gather(key = "training_variable",value = "minmax_value",-precip)
+
+p <- ggplot(minmax_data_plot,aes(minmax_value,fill=training_variable)) + 
   geom_histogram() + 
   facet_wrap(~training_variable,scales="free",ncol=5) +
   xlab("Training Variable") + 
@@ -591,17 +593,16 @@ This looks a little better, but still has some skewness to it.  Let's try one mo
 
 ```{r normalizedata_zscore,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
 
-zscore_data <- data_subset_training_plot %>%
-  group_by(training_variable) %>%
-  mutate(mean_value = mean(training_value,na.rm=TRUE),
-         sd_value = sd(training_value,na.rm=TRUE),
-         zscore_value = (training_value-mean_value)/(sd_value))
+zscore_data <- as.data.frame(apply(data_subset_training, 2, function(x) (x-mean(x,na.rm=TRUE))/sd(x,na.rm=TRUE)))
 
-p <- ggplot(zscore_data,aes(zscore_value,fill=training_variable)) + 
+zscore_data_plot <- zscore_data %>%
+  gather(key = "training_variable",value = "zscore_value",-precip)
+
+p <- ggplot(zscore_data_plot,aes(zscore_value,fill=training_variable)) + 
   geom_histogram() + 
   facet_wrap(~training_variable,scales="free",ncol=5) +
-  xlab("Training Variable") + 
-  ylab(expression("Training Value normalized by zscore")) + 
+  xlab("Training Value normalized by zscore") + 
+  ylab(expression("Count")) + 
   ggtitle(expression("Snapshot of Training Dataset normalized by zscore")) +
   theme_light() +
   scale_color_colorblind() +
@@ -617,6 +618,128 @@ p
 This is the best normalization method, as all histograms are centered on 0, even if they are not perfectly normal. 
 
 Although I like this one, I'll incorporate all three into different models to see which method works the best.
+
+## Polynomial Regression
+
+### Dry Bulb Temperature (Fahrenheit)
+
+Here, I explored 10 different polynomial models to predict precipitation based on dry bulb temperature in degrees fahrenheit.  Each model was scored based on its adjusted R-squared value.  The results show that the highest scoring polynomial model has an order of 2.
+
+```{r poly_relativehumidity}
+
+header <- data.frame()
+
+model_order_summary <- data.frame()
+
+predictor_variables <- colnames(zscore_data)
+
+predictor_variables <- predictor_variables[-match("precip",predictor_variables)]
+
+h <- 1
+
+i <- 1
+
+for(h in 1:length(predictor_variables)){
+  
+training_variable <- predictor_variables[h]
+
+for(i in 1:250){
+  
+print(training_variable)
+  
+print(i)
+  
+poly_order <- i
+
+model <- lm(precip ~ poly(eval(as.symbol(training_variable)),i,raw=TRUE),data=zscore_data)
+
+model_score <- summary(model)$adj.r.squared
+
+rbinder <- cbind(training_variable,poly_order,model_score)
+
+header <- rbind(header,rbinder)
+
+}
+
+model_summary <- header %>%
+  arrange(training_variable,desc(model_score)) %>%
+  group_by(training_variable) %>%
+  mutate(rn = row_number()) %>%
+  filter(rn == 1) %>%
+  dplyr::select(-rn)}
+
+model_summary
+
+```
+
+The plots look okay too.
+
+A first order regression for each:
+
+```{r poly_relativehumidity_plot,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+data_subset_training_plot_summary <- zscore_data_plot %>%
+  left_join(model_order_summary,by="training_variable")
+
+p <- ggplot(data_subset_training_plot_summary,aes(zscore_value,precip)) +
+     geom_point() +
+     stat_poly_line(formula = y ~ poly(x, 1, raw = TRUE)) +
+     stat_poly_eq(formula = y ~ poly(x, 1, raw = TRUE),
+               aes(label = paste(after_stat(eq.label),
+                                 after_stat(rr.label), sep = "*\", \"*"))) + 
+     facet_wrap(~training_variable,scales="free",ncol=2) +
+     xlab("Precipitation") + 
+     ylab(expression("Z-Score Value")) + 
+     ggtitle(expression("Training Dataset polynomial models")) +
+     theme_light() +
+     scale_color_colorblind() +
+     scale_fill_colorblind() +
+     theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_text(size=rel(1.2), face="bold",hjust = 0.5),
+        legend.position = "none") 
+
+p
+
+```
+
+Now using the polynomials acquired in the last step:
+
+```{r poly_relativehumidity_plot,message=FALSE,warning=FALSE,fig.width=10,fig.height=5}
+
+data_subset_training_plot_summary <- zscore_data_plot %>%
+  left_join(model_order_summary,by="training_variable")
+
+lm_eqn <- function(df){
+    m <- lm(y ~ poly(x, model_order, raw = TRUE), df);
+    eq <- substitute(italic(y) == a + b %.% italic(x)*","~~italic(r)^2~"="~r2, 
+         list(a = format(unname(coef(m)[1]), digits = 2),
+              b = format(unname(coef(m)[2]), digits = 2),
+             r2 = format(summary(m)$r.squared, digits = 3)))
+    as.character(as.expression(eq));
+}
+
+p <- ggplot(data_subset_training_plot_summary,aes(zscore_value,precip)) +
+     geom_point() +
+     stat_poly_line(formula = y ~ poly(x, model_order, raw = TRUE)) +
+     stat_poly_eq(formula = y ~ poly(x, model_order, raw = TRUE),
+               aes(label = after_stat(eq.label))) +
+     stat_poly_eq(label.y = 0.8) +
+     facet_wrap(~training_variable,scales="free",ncol=2) +
+     xlab("Precipitation") + 
+     ylab(expression("Z-Score Value")) + 
+     ggtitle(expression("Training Dataset polynomial models")) +
+     theme_light() +
+     scale_color_colorblind() +
+     scale_fill_colorblind() +
+     theme(axis.text.x=element_text(size=rel(1.2),angle = 90, vjust = 0.5, hjust = 1),
+        plot.title = element_text(size=rel(1.2), face="bold",hjust = 0.5),
+        legend.position = "none") 
+
+p
+
+```
+
+I can do the other variables later using a version of the above scripts.  Let's move on to regularization for now.
 
 ## Model Regulatization
 
@@ -649,6 +772,4 @@ glm_model_50 <- logistic_reg(
 
 
 ```
-
-## Trying a different model method (Random Forest)
 
